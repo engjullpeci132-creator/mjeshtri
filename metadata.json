@@ -1,0 +1,5 @@
+{
+  "name": "Mjeshtri",
+  "description": "Platformë për gjetjen dhe punësimin e shërbimeve urbane me hartë, galeri imazhesh, vlerësime dhe komente në kohë reale.",
+  "requestFramePermissions": ["geolocation"]
+}

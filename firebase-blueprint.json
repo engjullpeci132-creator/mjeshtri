@@ -1,0 +1,151 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "User profile information including role and location.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "displayName": { "type": "string" },
+        "realName": { "type": "string" },
+        "age": { "type": "integer" },
+        "origin": { "type": "string" },
+        "address": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "coverURL": { "type": "string" },
+        "role": { "type": "string", "enum": ["client", "provider", "admin"] },
+        "isPro": { "type": "boolean" },
+        "subscriptionExpires": { "type": "string", "format": "date-time" },
+        "location": {
+          "type": "object",
+          "properties": {
+            "lat": { "type": "number" },
+            "lng": { "type": "number" },
+            "address": { "type": "string" }
+          }
+        },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "Service": {
+      "title": "Service Listing",
+      "description": "A service offered by a provider.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "providerId": { "type": "string" },
+        "providerName": { "type": "string" },
+        "category": { "type": "string", "enum": ["driver", "gardener", "cleaner", "plumber", "electrician", "painter", "carpenter", "mechanic", "tutor", "babysitter", "it-support", "photographer", "other"] },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "pricePerHour": { "type": "number" },
+        "location": {
+          "type": "object",
+          "properties": {
+            "lat": { "type": "number" },
+            "lng": { "type": "number" },
+            "address": { "type": "string" }
+          }
+        },
+        "rating": { "type": "number" },
+        "reviewCount": { "type": "number" },
+        "images": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "experienceYears": { "type": "number" },
+        "availability": { "type": "string" },
+        "isProviderPro": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["providerId", "category", "title", "pricePerHour", "location", "images"]
+    },
+    "Booking": {
+      "title": "Service Booking",
+      "description": "A booking record for a service.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "clientId": { "type": "string" },
+        "clientName": { "type": "string" },
+        "serviceId": { "type": "string" },
+        "providerId": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "confirmed", "completed", "cancelled"] },
+        "scheduledAt": { "type": "string", "format": "date-time" },
+        "hours": { "type": "number" },
+        "totalPrice": { "type": "number" },
+        "serviceFee": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["clientId", "serviceId", "providerId", "status", "scheduledAt", "hours", "totalPrice"]
+    },
+    "Review": {
+      "title": "Service Review",
+      "description": "A review for a service.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "serviceId": { "type": "string" },
+        "clientId": { "type": "string" },
+        "clientName": { "type": "string" },
+        "rating": { "type": "number" },
+        "comment": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["serviceId", "clientId", "rating"]
+    },
+    "Message": {
+      "title": "Message",
+      "description": "A message in a chat.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "chatId": { "type": "string" },
+        "senderId": { "type": "string" },
+        "text": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["chatId", "senderId", "text"]
+    },
+    "ChatRoom": {
+      "title": "Chat Room",
+      "description": "A chat room between two users.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "participants": { "type": "array", "items": { "type": "string" } },
+        "lastMessage": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["participants"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles."
+    },
+    "/services/{serviceId}": {
+      "schema": "Service",
+      "description": "Service listings."
+    },
+    "/bookings/{bookingId}": {
+      "schema": "Booking",
+      "description": "Service bookings."
+    },
+    "/reviews/{reviewId}": {
+      "schema": "Review",
+      "description": "Service reviews."
+    },
+    "/chats/{chatId}": {
+      "schema": "ChatRoom",
+      "description": "Chat rooms."
+    },
+    "/chats/{chatId}/messages/{messageId}": {
+      "schema": "Message",
+      "description": "Messages within a chat room."
+    }
+  }
+}

@@ -1,0 +1,224 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {userId}
+    // Fields:
+    //   - uid: string (required)
+    //   - email: string (required)
+    //   - displayName: string (optional)
+    //   - photoURL: string (optional)
+    //   - role: string (required, ['client', 'provider', 'admin'])
+    //   - location: map (optional, {lat, lng, address})
+    //   - createdAt: string (required)
+    //
+    // Collection: services
+    // Document ID: {serviceId}
+    // Fields:
+    //   - id: string (required)
+    //   - providerId: string (required)
+    //   - providerName: string (required)
+    //   - category: string (required, ['driver', 'gardener', 'cleaner', 'plumber', 'electrician', 'other'])
+    //   - title: string (required)
+    //   - description: string (required)
+    //   - pricePerHour: number (required)
+    //   - location: map (required, {lat, lng, address})
+    //   - rating: number (required)
+    //   - reviewCount: number (required)
+    //   - createdAt: string (required)
+    //
+    // Collection: bookings
+    // Document ID: {bookingId}
+    // Fields:
+    //   - id: string (required)
+    //   - clientId: string (required)
+    //   - clientName: string (required)
+    //   - serviceId: string (required)
+    //   - providerId: string (required)
+    //   - status: string (required, ['pending', 'confirmed', 'completed', 'cancelled'])
+    //   - scheduledAt: string (required)
+    //   - hours: number (required)
+    //   - totalPrice: number (required)
+    //   - serviceFee: number (required)
+    //   - createdAt: string (required)
+    //
+    // Collection: reviews
+    // Document ID: {reviewId}
+    // Fields:
+    //   - id: string (required)
+    //   - serviceId: string (required)
+    //   - clientId: string (required)
+    //   - clientName: string (required)
+    //   - rating: number (required)
+    //   - comment: string (optional)
+    //   - createdAt: string (required)
+    //
+    // Collection: chats
+    // Document ID: {chatId}
+    // Fields:
+    //   - id: string (required)
+    //   - participants: list (required, strings)
+    //   - lastMessage: string (optional)
+    //   - updatedAt: string (required)
+    //
+    // Collection: messages (subcollection of chats)
+    // Document ID: {messageId}
+    // Fields:
+    //   - chatId: string (required)
+    //   - senderId: string (required)
+    //   - text: string (required)
+    //   - createdAt: string (required)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (request.auth.token.email == "engjullpeci132@gmail.com" && request.auth.token.email_verified == true ||
+         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'));
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isValidDateString(dateStr) {
+      return dateStr is string && dateStr.matches("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}.*");
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUser(data) {
+      return data.uid is string &&
+             data.email is string && isValidEmail(data.email) &&
+             data.role in ['client', 'provider', 'admin'] &&
+             isValidDateString(data.createdAt);
+    }
+
+    function isValidService(data) {
+      return data.providerId is string &&
+             data.category in ['driver', 'gardener', 'cleaner', 'plumber', 'electrician', 'painter', 'carpenter', 'mechanic', 'tutor', 'babysitter', 'it-support', 'photographer', 'other'] &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 100 &&
+             data.description is string && data.description.size() < 1000 &&
+             data.pricePerHour is number && data.pricePerHour > 0 &&
+             data.location is map &&
+             data.rating is number &&
+             data.reviewCount is number &&
+             data.images is list &&
+             (!('experienceYears' in data) || data.experienceYears is number) &&
+             (!('availability' in data) || data.availability is string) &&
+             isValidDateString(data.createdAt);
+    }
+
+    function isValidBooking(data) {
+      return data.clientId is string &&
+             data.serviceId is string &&
+             data.providerId is string &&
+             data.status in ['pending', 'confirmed', 'completed', 'cancelled'] &&
+             isValidDateString(data.scheduledAt) &&
+             data.hours is number && data.hours > 0 &&
+             data.totalPrice is number && data.totalPrice >= 0 &&
+             data.serviceFee is number && data.serviceFee >= 0 &&
+             isValidDateString(data.createdAt);
+    }
+
+    function isValidReview(data) {
+      return data.serviceId is string &&
+             data.clientId is string &&
+             data.rating is number && data.rating >= 1 && data.rating <= 5 &&
+             isValidDateString(data.createdAt);
+    }
+
+    function isValidChat(data) {
+      return data.participants is list && data.participants.size() == 2 &&
+             isValidDateString(data.updatedAt);
+    }
+
+    function isValidMessage(data) {
+      return data.chatId is string &&
+             data.senderId is string &&
+             data.text is string && data.text.size() > 0 && data.text.size() < 2000 &&
+             isValidDateString(data.createdAt);
+    }
+
+    // ===============================================================
+    // Collection Rules
+    // ===============================================================
+
+    match /test/connection {
+      allow read: if true;
+    }
+
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isOwner(userId) && isValidUser(request.resource.data) && (request.resource.data.role != 'admin' || isAdmin());
+      allow update: if isOwner(userId) && isValidUser(request.resource.data) && 
+                    (request.resource.data.role == resource.data.role || 
+                     (resource.data.role in ['client', 'provider'] && request.resource.data.role in ['client', 'provider']) || 
+                     isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    match /services/{serviceId} {
+      allow read: if true; // Services are public to search
+      allow create: if isAuthenticated() && isValidService(request.resource.data) && request.resource.data.providerId == request.auth.uid;
+      allow update: if isAuthenticated() && (request.auth.uid == resource.data.providerId || isAdmin()) && isValidService(request.resource.data);
+      allow delete: if isAuthenticated() && (request.auth.uid == resource.data.providerId || isAdmin());
+    }
+
+    match /bookings/{bookingId} {
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.clientId || request.auth.uid == resource.data.providerId || isAdmin());
+      allow create: if isAuthenticated() && isValidBooking(request.resource.data) && request.resource.data.clientId == request.auth.uid;
+      allow update: if isAuthenticated() && (request.auth.uid == resource.data.clientId || request.auth.uid == resource.data.providerId || isAdmin()) && isValidBooking(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /reviews/{reviewId} {
+      allow read: if true;
+      allow create: if isAuthenticated() && isValidReview(request.resource.data) && request.resource.data.clientId == request.auth.uid;
+      allow update: if isAuthenticated() && (request.auth.uid == resource.data.clientId || isAdmin()) && isValidReview(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /chats/{chatId} {
+      allow get: if isAuthenticated();
+      allow list: if isAuthenticated() && resource.data.participants.hasAny([request.auth.uid]);
+      allow create: if isAuthenticated() && request.resource.data.participants.hasAny([request.auth.uid]);
+      allow update: if isAuthenticated() && resource.data.participants.hasAny([request.auth.uid]);
+      allow delete: if isAdmin();
+
+      match /messages/{messageId} {
+        allow read: if isAuthenticated() && 
+                      exists(/databases/$(database)/documents/chats/$(chatId)) &&
+                      get(/databases/$(database)/documents/chats/$(chatId)).data.participants.hasAny([request.auth.uid]);
+        allow create: if isAuthenticated() && 
+                      exists(/databases/$(database)/documents/chats/$(chatId)) &&
+                      get(/databases/$(database)/documents/chats/$(chatId)).data.participants.hasAny([request.auth.uid]) &&
+                      request.resource.data.senderId == request.auth.uid;
+      }
+    }
+  }
+}
