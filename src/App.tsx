@@ -245,15 +245,24 @@ export default function App() {
         try {
           const userDoc = await getDoc(userDocRef);
           if (userDoc.exists()) {
-            setProfile(userDoc.data() as UserProfile);
+            const data = userDoc.data() as UserProfile;
+            // Auto-upgrade to admin if email matches
+            if (firebaseUser.email === 'engjullpeci132@gmail.com' && data.role !== 'admin') {
+              const updatedProfile = { ...data, role: 'admin' as UserRole };
+              await updateDoc(userDocRef, { role: 'admin' });
+              setProfile(updatedProfile);
+            } else {
+              setProfile(data);
+            }
           } else {
             // Create initial profile
+            const isAdminEmail = firebaseUser.email === 'engjullpeci132@gmail.com';
             const newProfile: UserProfile = {
               uid: firebaseUser.uid,
               email: firebaseUser.email || '',
               displayName: firebaseUser.displayName || 'User',
               photoURL: firebaseUser.photoURL || '',
-              role: 'client',
+              role: isAdminEmail ? 'admin' : 'client',
               createdAt: new Date().toISOString(),
             };
             await setDoc(userDocRef, newProfile);
@@ -754,7 +763,11 @@ export default function App() {
                 <div className="flex items-center gap-3">
                   <div className="hidden sm:block text-right">
                     <p className="text-xs font-semibold text-slate-900">{profile?.displayName}</p>
-                    <p className="text-[10px] text-slate-500 capitalize">{profile?.role === 'client' ? 'Klient' : profile?.role === 'provider' ? 'Ofrues' : 'Admin'}</p>
+                    <p className="text-[10px] text-slate-500 capitalize">
+                      {profile?.role === 'client' ? 'Klient' : 
+                       profile?.role === 'provider' ? 'Ofrues' : 
+                       profile?.role === 'admin' ? 'Admin' : 'Përdorues'}
+                    </p>
                   </div>
                   <img 
                     src={profile?.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(profile?.displayName || user.displayName || 'User')}&background=random&color=fff`} 
