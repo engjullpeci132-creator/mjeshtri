@@ -1,4 +1,5 @@
 export type UserRole = 'client' | 'provider' | 'admin';
+export type SubscriptionPlan = 'free' | 'basic' | 'standard' | 'premium';
 
 export interface Location {
   lat: number;
@@ -18,6 +19,7 @@ export interface UserProfile {
   coverURL?: string;
   role: UserRole;
   isPro?: boolean;
+  subscriptionPlan?: SubscriptionPlan;
   subscriptionExpires?: string;
   location?: Location;
   createdAt: string;
@@ -29,6 +31,7 @@ export interface ServiceListing {
   id: string;
   providerId: string;
   providerName: string;
+  providerPhotoURL?: string;
   category: ServiceCategory;
   title: string;
   description: string;
@@ -51,9 +54,26 @@ export interface Message {
   createdAt: string;
 }
 
+export interface SubscriptionRequest {
+  id: string;
+  userId: string;
+  userEmail: string;
+  plan: SubscriptionPlan;
+  amount: string;
+  receiptURL: string;
+  status: 'pending' | 'approved' | 'rejected';
+  createdAt: string;
+}
+
 export interface ChatRoom {
   id: string;
   participants: string[];
+  participantDetails?: {
+    [uid: string]: {
+      displayName: string;
+      photoURL: string;
+    }
+  };
   lastMessage?: string;
   updatedAt: string;
 }
@@ -65,7 +85,9 @@ export interface Booking {
   clientId: string;
   clientName: string;
   serviceId: string;
+  serviceTitle: string;
   providerId: string;
+  providerName: string;
   status: BookingStatus;
   scheduledAt: string;
   hours: number;

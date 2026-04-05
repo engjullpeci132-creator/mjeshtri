@@ -120,6 +120,22 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["participants"]
+    },
+    "SubscriptionRequest": {
+      "title": "Subscription Request",
+      "description": "A request for a subscription upgrade with manual verification.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "userEmail": { "type": "string" },
+        "plan": { "type": "string", "enum": ["basic", "standard", "premium"] },
+        "amount": { "type": "string" },
+        "receiptURL": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "plan", "amount", "receiptURL", "status"]
     }
   },
   "firestore": {
@@ -146,6 +162,10 @@
     "/chats/{chatId}/messages/{messageId}": {
       "schema": "Message",
       "description": "Messages within a chat room."
+    },
+    "/subscription_requests/{requestId}": {
+      "schema": "SubscriptionRequest",
+      "description": "Manual subscription verification requests."
     }
   }
 }
