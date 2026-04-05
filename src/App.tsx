@@ -247,7 +247,7 @@ export default function App() {
           if (userDoc.exists()) {
             const data = userDoc.data() as UserProfile;
             // Auto-upgrade to admin if email matches
-            if (firebaseUser.email === 'engjullpeci132@gmail.com' && data.role !== 'admin') {
+            if (firebaseUser.email === 'casperxoni@gmail.com' && data.role !== 'admin') {
               const updatedProfile = { ...data, role: 'admin' as UserRole };
               await updateDoc(userDocRef, { role: 'admin' });
               setProfile(updatedProfile);
@@ -256,7 +256,7 @@ export default function App() {
             }
           } else {
             // Create initial profile
-            const isAdminEmail = firebaseUser.email === 'engjullpeci132@gmail.com';
+            const isAdminEmail = firebaseUser.email === 'casperxoni@gmail.com';
             const newProfile: UserProfile = {
               uid: firebaseUser.uid,
               email: firebaseUser.email || '',
@@ -269,7 +269,8 @@ export default function App() {
             setProfile(newProfile);
           }
         } catch (error) {
-          handleFirestoreError(error, OperationType.GET, `users/${firebaseUser.uid}`);
+          console.error("Profile fetch/create error:", error);
+          // Don't throw here to allow isAuthReady to be set
         }
       } else {
         setProfile(null);
@@ -362,6 +363,7 @@ export default function App() {
     const provider = new GoogleAuthProvider();
     try {
       await signInWithPopup(auth, provider);
+      setView('profile');
     } catch (error: any) {
       if (error.code === 'auth/cancelled-popup-request' || error.code === 'auth/popup-closed-by-user') {
         console.log("Login popup closed or cancelled.");

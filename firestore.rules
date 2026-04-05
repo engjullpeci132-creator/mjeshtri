@@ -102,7 +102,7 @@ service cloud.firestore {
 
     function isAdmin() {
       return isAuthenticated() &&
-        (request.auth.token.email == "engjullpeci132@gmail.com" && request.auth.token.email_verified == true ||
+        (request.auth.token.email == "casperxoni@gmail.com" && request.auth.token.email_verified == true ||
          (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'));
     }

@@ -3,7 +3,7 @@
   "appId": "1:757734424137:web:9551c9ccb72d36b7440998",
   "apiKey": "AIzaSyC5MGQzrFKYTup-ZNEM9QsS1bMXH2feNzs",
   "authDomain": "mjeshtri-81cdb.firebaseapp.com",
-  "firestoreDatabaseId": "",
+  "firestoreDatabaseId": "(default)",
   "storageBucket": "mjeshtri-81cdb.firebasestorage.app",
   "messagingSenderId": "757734424137",
   "measurementId": "G-RMEGRNS082"
