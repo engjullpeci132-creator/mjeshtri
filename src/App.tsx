@@ -25,7 +25,9 @@ import {
   Edit2,
   Trash2,
   PlusCircle,
-  Zap
+  Zap,
+  CreditCard,
+  Upload
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
@@ -68,7 +70,13 @@ import {
   limit,
   getDocFromServer
 } from 'firebase/firestore';
-import { auth, db } from './firebase';
+import { 
+  ref, 
+  uploadBytes, 
+  getDownloadURL 
+} from 'firebase/storage';
+import { QRCodeCanvas } from 'qrcode.react';
+import { auth, db, storage } from './firebase';
 import { 
   UserProfile, 
   ServiceListing, 
@@ -217,6 +225,10 @@ export default function App() {
     origin: '',
     address: ''
   });
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [coverFile, setCoverFile] = useState<File | null>(null);
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [coverPreview, setCoverPreview] = useState<string | null>(null);
   const [isUpgrading, setIsUpgrading] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState<{ plan: SubscriptionPlan, price: string } | null>(null);
   const [paymentLoading, setPaymentLoading] = useState(false);
@@ -519,24 +531,45 @@ export default function App() {
     }
   };
 
+  const uploadFile = async (file: File, path: string): Promise<string> => {
+    const storageRef = ref(storage, path);
+    await uploadBytes(storageRef, file);
+    return await getDownloadURL(storageRef);
+  };
+
   const handleUpdateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user || !profile) return;
 
     try {
-      await updateDoc(doc(db, 'users', user.uid), editProfileData);
+      let finalProfileData = { ...editProfileData };
+
+      if (photoFile) {
+        const photoURL = await uploadFile(photoFile, `users/${user.uid}/profile_${Date.now()}`);
+        finalProfileData.photoURL = photoURL;
+      }
+      if (coverFile) {
+        const coverURL = await uploadFile(coverFile, `users/${user.uid}/cover_${Date.now()}`);
+        finalProfileData.coverURL = coverURL;
+      }
+
+      await updateDoc(doc(db, 'users', user.uid), finalProfileData);
       
       // Update all services for this provider if name or photo changed
       const userServices = services.filter(s => s.providerId === user.uid);
       for (const service of userServices) {
         await updateDoc(doc(db, 'services', service.id), {
-          providerName: editProfileData.displayName,
-          providerPhotoURL: editProfileData.photoURL
+          providerName: finalProfileData.displayName,
+          providerPhotoURL: finalProfileData.photoURL
         });
       }
       
-      setProfile({ ...profile, ...editProfileData });
+      setProfile({ ...profile, ...finalProfileData });
       setIsEditingProfile(false);
+      setPhotoFile(null);
+      setCoverFile(null);
+      setPhotoPreview(null);
+      setCoverPreview(null);
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `users/${user.uid}`);
     }
@@ -555,30 +588,78 @@ export default function App() {
     setShowPaymentModal({ plan, price: prices[plan] });
   };
 
-  const processPayment = async () => {
-    if (!user || !profile || !showPaymentModal || !receiptPreview) {
-      alert("Ju lutem ngarkoni dëshminë e pagesës.");
-      return;
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('payment_success') === 'true') {
+      const plan = urlParams.get('plan');
+      alert(`Urime! Pagesa juaj u krye me sukses. Plani ${plan?.toUpperCase()} është aktivizuar.`);
+      // Clear URL params
+      window.history.replaceState({}, document.title, window.location.pathname);
+    } else if (urlParams.get('payment_cancelled') === 'true') {
+      alert("Pagesa u anulua. Mund të provoni përsëri kurdoherë.");
+      window.history.replaceState({}, document.title, window.location.pathname);
     }
+  }, []);
+
+  const processPayment = async (method: 'manual' | 'crypto') => {
+    if (!user || !profile || !showPaymentModal) return;
     
     setPaymentLoading(true);
     try {
+      if (method === 'crypto') {
+        const response = await fetch('/api/create-payment', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: user.uid,
+            price: showPaymentModal.price,
+            plan: showPaymentModal.plan
+          })
+        });
+
+        const data = await response.json();
+        if (data.invoice_url) {
+          window.location.href = data.invoice_url;
+          return;
+        } else {
+          throw new Error(data.message || "Dështoi krijimi i pagesës automatike.");
+        }
+      }
+
+      let receiptURL = '';
+      let status: 'pending' | 'approved' = 'pending';
+
+      if (method === 'manual') {
+        if (receiptFile) {
+          receiptURL = await uploadFile(receiptFile, `receipts/${user.uid}_${Date.now()}`);
+        } else {
+          alert("Ju lutem ngarkoni dëshminë e pagesës.");
+          setPaymentLoading(false);
+          return;
+        }
+      }
+
       const requestData = {
         userId: user.uid,
         userEmail: user.email,
         plan: showPaymentModal.plan,
         amount: showPaymentModal.price,
-        receiptURL: receiptPreview, // In a real app, this would be a Firebase Storage URL
-        status: 'pending',
+        receiptURL: receiptURL,
+        status: status,
+        method: method,
         createdAt: new Date().toISOString()
       };
+      
       await addDoc(collection(db, 'subscription_requests'), requestData);
+      
       alert("Kërkesa juaj u dërgua! Admini do ta verifikojë pagesën tuaj së shpejti.");
+
       setShowPaymentModal(null);
       setReceiptFile(null);
       setReceiptPreview(null);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, 'subscription_requests');
+    } catch (error: any) {
+      console.error("Payment error:", error);
+      alert("Gabim gjatë procesimit të pagesës: " + error.message);
     } finally {
       setPaymentLoading(false);
     }
@@ -687,8 +768,50 @@ export default function App() {
     return () => unsubscribe();
   }, [activeChat]);
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('payment_success') === 'true' && user) {
+      const plan = params.get('plan') as SubscriptionPlan;
+      const sessionId = params.get('session_id');
+      
+      const handleSuccess = async () => {
+        const expires = new Date();
+        expires.setMonth(expires.getMonth() + 1);
+        
+        try {
+          await updateDoc(doc(db, 'users', user.uid), {
+            isPro: true,
+            subscriptionPlan: plan,
+            subscriptionExpires: expires.toISOString()
+          });
+          
+          // Add a record of the successful payment
+          await addDoc(collection(db, 'subscription_requests'), {
+            userId: user.uid,
+            userEmail: user.email,
+            plan: plan,
+            amount: 'STRIPE_AUTO',
+            receiptURL: `STRIPE_SESSION_${sessionId}`,
+            status: 'approved',
+            createdAt: new Date().toISOString()
+          });
+
+          // Clean up URL
+          window.history.replaceState({}, '', window.location.pathname);
+          alert(`Urime! Abonimi juaj ${plan.toUpperCase()} është aktivizuar.`);
+        } catch (error) {
+          console.error("Error updating subscription:", error);
+        }
+      };
+      
+      handleSuccess();
+    } else if (params.get('payment_cancelled') === 'true') {
+      alert("Pagesa u anulua.");
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, [user]);
+
   const handleDeleteService = async (serviceId: string) => {
-    if (!window.confirm("A jeni të sigurt që dëshironi të fshini këtë shërbim?")) return;
     try {
       await deleteDoc(doc(db, 'services', serviceId));
       if (selectedService?.id === serviceId) setSelectedService(null);
@@ -711,6 +834,24 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans flex flex-col">
+      {/* Demo Mode Notice */}
+      <div className="fixed bottom-0 left-0 right-0 z-[999] bg-indigo-950 text-white p-3 text-center text-sm shadow-2xl flex flex-col sm:flex-row items-center justify-center gap-3 border-t border-indigo-800">
+        <span className="bg-amber-500 text-amber-950 px-2.5 py-1 rounded text-[10px] font-black uppercase tracking-widest shadow-sm">
+          System Notice
+        </span>
+        <span className="font-medium text-indigo-100">
+          Demo mode. For full functional website system, visit{" "}
+          <a 
+            href="https://vizionidigjital.com" 
+            target="_blank" 
+            rel="noopener noreferrer" 
+            className="text-amber-400 font-bold hover:text-amber-300 hover:underline transition-colors ml-1"
+          >
+            vizionidigjital.com
+          </a>
+        </span>
+      </div>
+
       {/* Navigation */}
       <nav className="sticky top-0 z-40 bg-white/80 backdrop-blur-md border-b border-slate-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -1210,22 +1351,76 @@ export default function App() {
                         />
                       </div>
                       <div className="space-y-2">
-                        <label className="text-sm font-bold text-slate-700">URL e Fotos së Profilit</label>
-                        <input 
-                          type="url"
-                          className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none"
-                          value={editProfileData.photoURL}
-                          onChange={(e) => setEditProfileData({ ...editProfileData, photoURL: e.target.value })}
-                        />
+                        <label className="text-sm font-bold text-slate-700">Foto e Profilit</label>
+                        <div className="flex items-center gap-4">
+                          <div className="w-16 h-16 rounded-2xl bg-slate-100 overflow-hidden border border-slate-200">
+                            <img 
+                              src={photoPreview || editProfileData.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(editProfileData.displayName)}&background=random&color=fff`} 
+                              className="w-full h-full object-cover"
+                              alt="Preview"
+                            />
+                          </div>
+                          <input 
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            id="profile-photo-upload"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (file) {
+                                setPhotoFile(file);
+                                const reader = new FileReader();
+                                reader.onloadend = () => setPhotoPreview(reader.result as string);
+                                reader.readAsDataURL(file);
+                              }
+                            }}
+                          />
+                          <label 
+                            htmlFor="profile-photo-upload"
+                            className="px-4 py-2 bg-slate-100 text-slate-700 rounded-xl text-xs font-bold hover:bg-slate-200 cursor-pointer transition-all"
+                          >
+                            Zgjidh Foto
+                          </label>
+                        </div>
                       </div>
                       <div className="space-y-2">
-                        <label className="text-sm font-bold text-slate-700">URL e Fotos së Ballinës</label>
-                        <input 
-                          type="url"
-                          className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none"
-                          value={editProfileData.coverURL}
-                          onChange={(e) => setEditProfileData({ ...editProfileData, coverURL: e.target.value })}
-                        />
+                        <label className="text-sm font-bold text-slate-700">Foto e Ballinës</label>
+                        <div className="flex items-center gap-4">
+                          <div className="w-16 h-16 rounded-2xl bg-slate-100 overflow-hidden border border-slate-200">
+                            {coverPreview || editProfileData.coverURL ? (
+                              <img 
+                                src={coverPreview || editProfileData.coverURL} 
+                                className="w-full h-full object-cover"
+                                alt="Preview"
+                              />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center text-slate-300">
+                                <ImageIcon className="w-6 h-6" />
+                              </div>
+                            )}
+                          </div>
+                          <input 
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            id="profile-cover-upload"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (file) {
+                                setCoverFile(file);
+                                const reader = new FileReader();
+                                reader.onloadend = () => setCoverPreview(reader.result as string);
+                                reader.readAsDataURL(file);
+                              }
+                            }}
+                          />
+                          <label 
+                            htmlFor="profile-cover-upload"
+                            className="px-4 py-2 bg-slate-100 text-slate-700 rounded-xl text-xs font-bold hover:bg-slate-200 cursor-pointer transition-all"
+                          >
+                            Zgjidh Foto
+                          </label>
+                        </div>
                       </div>
                     </div>
                     <div className="flex gap-4">
@@ -1687,9 +1882,11 @@ export default function App() {
         {view === 'create-service' && profile?.role === 'provider' && (
           <CreateServiceForm 
             onCancel={() => setView('profile')} 
-            onSuccess={() => setView('home')} 
+            onSuccess={() => setView('profile')} 
             userLocation={userLocation}
             profile={profile}
+            initialData={editingService}
+            onDelete={handleDeleteService}
           />
         )}
         {/* Review Modal */}
@@ -1781,20 +1978,76 @@ export default function App() {
                       <span className="text-slate-600 font-bold">Totali:</span>
                       <span className="text-2xl font-black text-slate-900">${showPaymentModal.price}</span>
                     </div>
-                    <div className="pt-4 border-t border-slate-200">
-                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Të dhënat për pagesë (E-Banking)</p>
-                      <div className="bg-white p-4 rounded-xl text-xs space-y-1 font-mono">
-                        <p>Përfituesi: <span className="font-bold">Mjeshtri Sh.P.K</span></p>
-                        <p>IBAN: <span className="font-bold">XK00 1234 5678 9012 3456</span></p>
-                        <p>Banka: <span className="font-bold">Raiffeisen Bank Kosovo</span></p>
-                        <p>Përshkrimi: <span className="font-bold">Abonimi {showPaymentModal.plan}</span></p>
-                      </div>
-                    </div>
                   </div>
 
                   <div className="space-y-4">
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Opsioni 1: Aktivizim i Menjëhershëm (Crypto)</p>
+                        <div className="flex gap-1">
+                          <img src="https://cryptologos.cc/logos/tether-usdt-logo.svg?v=024" className="h-4" alt="USDT" />
+                          <img src="https://cryptologos.cc/logos/bitcoin-btc-logo.svg?v=024" className="h-4" alt="BTC" />
+                        </div>
+                      </div>
+                      <p className="text-[9px] text-slate-500 font-medium italic">Sistemi automatik që punon në Kosovë. Plani aktivizohet <span className="font-bold text-amber-600">menjëherë</span> pas konfirmimit.</p>
+                      <button 
+                        onClick={() => processPayment('crypto')}
+                        disabled={paymentLoading}
+                        className="w-full py-4 bg-slate-900 text-white rounded-xl font-bold hover:bg-black transition-all flex items-center justify-center gap-3 shadow-lg shadow-slate-200"
+                      >
+                        <Zap className="w-5 h-5 text-amber-400 fill-amber-400" />
+                        Paguaj me Crypto (Automatike)
+                      </button>
+                    </div>
+
+                    <div className="relative py-2">
+                      <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-200"></div></div>
+                      <div className="relative flex justify-center text-[10px] uppercase font-black"><span className="bg-white px-3 text-slate-400 tracking-widest">Ose me Transfer Bankar</span></div>
+                    </div>
+
+                    <div className="space-y-4 pt-4 border-t border-slate-100">
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Opsioni 2: Transfer Bankar Lokal (Kosovo)</p>
+                      <p className="text-[9px] text-slate-500 font-medium italic">Për përdoruesit e NLB dhe Raiffeisen. Aktivizimi bëhet pas verifikimit manual.</p>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {/* Raiffeisen */}
+                        <div className="space-y-3 bg-slate-50 p-4 rounded-xl border border-slate-100">
+                          <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                            <span className="text-[9px] font-black text-slate-400 uppercase">Raiffeisen Bank</span>
+                            <div className="p-1 bg-white rounded border border-slate-200">
+                              <QRCodeCanvas 
+                                value={`IBAN:XK001234567890123456;Amount:${showPaymentModal.price};Desc:Abonimi ${showPaymentModal.plan}`}
+                                size={40}
+                              />
+                            </div>
+                          </div>
+                          <div className="font-mono text-[9px] space-y-1">
+                            <p>IBAN: <span className="font-bold text-slate-900">XK00 1234 5678 9012 3456</span></p>
+                            <p>Përfituesi: <span className="font-bold text-slate-900">Mjeshtri Sh.P.K</span></p>
+                          </div>
+                        </div>
+
+                        {/* NLB Bank */}
+                        <div className="space-y-3 bg-slate-50 p-4 rounded-xl border border-slate-100">
+                          <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                            <span className="text-[9px] font-black text-slate-400 uppercase">NLB Bank Kosovo</span>
+                            <div className="p-1 bg-white rounded border border-slate-200">
+                              <QRCodeCanvas 
+                                value={`IBAN:XK001701234567890123;Amount:${showPaymentModal.price};Desc:Abonimi ${showPaymentModal.plan}`}
+                                size={40}
+                              />
+                            </div>
+                          </div>
+                          <div className="font-mono text-[9px] space-y-1">
+                            <p>IBAN: <span className="font-bold text-slate-900">XK00 1701 2345 6789 0123</span></p>
+                            <p>Përfituesi: <span className="font-bold text-slate-900">Mjeshtri Sh.P.K</span></p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
                     <div className="space-y-2">
-                      <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Ngarko Dëshminë (Screenshot)</label>
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Ngarko Dëshminë (Screenshot)</label>
                       <div className="relative">
                         <input 
                           type="file" 
@@ -1830,9 +2083,9 @@ export default function App() {
 
                   <div className="pt-4 space-y-4">
                     <button 
-                      disabled={paymentLoading || !receiptPreview}
-                      onClick={processPayment}
-                      className="w-full py-5 bg-indigo-600 text-white rounded-2xl font-black hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-200 flex items-center justify-center gap-3 disabled:opacity-50"
+                      disabled={paymentLoading || !receiptFile}
+                      onClick={() => processPayment('manual')}
+                      className="w-full py-5 bg-slate-900 text-white rounded-2xl font-black hover:bg-black transition-all shadow-xl shadow-slate-200 flex items-center justify-center gap-3 disabled:opacity-50"
                     >
                       {paymentLoading ? (
                         <motion.div 
@@ -1843,7 +2096,7 @@ export default function App() {
                       ) : (
                         <CheckCircle className="w-5 h-5" />
                       )}
-                      {paymentLoading ? 'Duke u dërguar...' : 'Dërgo për Verifikim'}
+                      {paymentLoading ? 'Duke u dërguar...' : 'Dërgo Faturën për Verifikim'}
                     </button>
                     <p className="text-[10px] text-slate-400 text-center font-medium">
                       Admini do të verifikojë pagesën brenda 24 orëve. <br/>
@@ -1853,11 +2106,11 @@ export default function App() {
                 </div>
               </motion.div>
             </div>
-          )}
+        )}
         </AnimatePresence>
       </main>
 
-      <footer className="mt-20 py-12 border-t border-slate-200 bg-white">
+      <footer className="mt-20 py-12 pb-24 border-t border-slate-200 bg-white">
         <div className="max-w-7xl mx-auto px-4 text-center space-y-4">
           <div className="flex justify-center gap-6 text-sm font-bold text-slate-500">
             <button onClick={() => setShowTerms(true)} className="hover:text-indigo-600">Kushtet</button>
@@ -2413,7 +2666,7 @@ function BookingCard({ booking, isProvider, onUpdateStatus }: { booking: Booking
   );
 }
 
-function CreateServiceForm({ onCancel, onSuccess, userLocation, initialData, profile }: { onCancel: () => void, onSuccess: () => void, userLocation: Location | null, initialData?: ServiceListing | null, profile: UserProfile }) {
+function CreateServiceForm({ onCancel, onSuccess, userLocation, initialData, profile, onDelete }: { onCancel: () => void, onSuccess: () => void, userLocation: Location | null, initialData?: ServiceListing | null, profile: UserProfile, onDelete: (id: string) => Promise<void> }) {
   const [formData, setFormData] = useState({
     title: initialData?.title || '',
     description: initialData?.description || '',
@@ -2426,12 +2679,41 @@ function CreateServiceForm({ onCancel, onSuccess, userLocation, initialData, pro
   });
   const [imageUrl, setImageUrl] = useState('');
   const [loading, setLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
 
   useEffect(() => {
     if (!initialData && userLocation && !formData.address) {
       setFormData(prev => ({ ...prev, address: userLocation.address }));
     }
   }, [userLocation, initialData]);
+
+  const uploadFile = async (file: File, path: string): Promise<string> => {
+    const storageRef = ref(storage, path);
+    await uploadBytes(storageRef, file);
+    return await getDownloadURL(storageRef);
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const limit = profile.isPro ? 5 : 2;
+    if (formData.images.length >= limit) {
+      alert(`Si anëtar ${profile.isPro ? 'PRO' : 'i thjeshtë'}, mund të shtoni deri në ${limit} foto.`);
+      return;
+    }
+
+    setUploading(true);
+    try {
+      const url = await uploadFile(file, `services/${auth.currentUser?.uid}/${Date.now()}_${file.name}`);
+      setFormData(prev => ({ ...prev, images: [...prev.images, url] }));
+    } catch (error) {
+      console.error("Upload error:", error);
+      alert("Gabim gjatë ngarkimit të fotos.");
+    } finally {
+      setUploading(false);
+    }
+  };
 
   const addImage = () => {
     const limit = profile.isPro ? 5 : 2;
@@ -2561,36 +2843,68 @@ function CreateServiceForm({ onCancel, onSuccess, userLocation, initialData, pro
         </div>
 
         <div className="space-y-4">
-          <label className="text-sm font-bold text-slate-700">Fotografitë e Punës (URL)</label>
+          <label className="text-sm font-bold text-slate-700">Fotografitë e Punës</label>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            {formData.images.map((url, index) => (
+              <div key={index} className="relative aspect-square rounded-2xl overflow-hidden group border border-slate-200">
+                <img src={url} className="w-full h-full object-cover" alt="Service" referrerPolicy="no-referrer" />
+                <button 
+                  type="button"
+                  onClick={() => removeImage(url)}
+                  className="absolute top-2 right-2 p-1.5 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-all"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            ))}
+            {formData.images.length < (profile.isPro ? 5 : 2) && (
+              <div className="relative aspect-square">
+                <input 
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  id="service-image-upload"
+                  onChange={handleFileUpload}
+                  disabled={uploading}
+                />
+                <label 
+                  htmlFor="service-image-upload"
+                  className={cn(
+                    "w-full h-full flex flex-col items-center justify-center gap-2 border-2 border-dashed border-slate-200 rounded-2xl hover:border-indigo-400 hover:bg-indigo-50 transition-all cursor-pointer",
+                    uploading && "opacity-50 cursor-wait"
+                  )}
+                >
+                  {uploading ? (
+                    <motion.div 
+                      animate={{ rotate: 360 }}
+                      transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
+                      className="w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full"
+                    />
+                  ) : (
+                    <>
+                      <PlusCircle className="w-6 h-6 text-slate-300" />
+                      <span className="text-[10px] font-bold text-slate-500">Ngarko</span>
+                    </>
+                  )}
+                </label>
+              </div>
+            )}
+          </div>
           <div className="flex gap-2">
             <input 
               type="url" 
-              placeholder="https://shembull.com/imazhi.jpg"
-              className="flex-1 px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none"
+              placeholder="Ose shto URL të fotos..."
+              className="flex-1 px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
               value={imageUrl}
               onChange={(e) => setImageUrl(e.target.value)}
             />
             <button 
               type="button"
               onClick={addImage}
-              className="bg-slate-900 text-white px-6 rounded-xl font-bold hover:bg-indigo-600 transition-all"
+              className="px-4 py-3 bg-slate-100 text-slate-700 rounded-xl font-bold hover:bg-slate-200 transition-all text-sm"
             >
               Shto
             </button>
-          </div>
-          <div className="grid grid-cols-3 gap-4">
-            {formData.images.map((img, idx) => (
-              <div key={idx} className="relative aspect-video rounded-xl overflow-hidden border border-slate-200 group">
-                <img src={img} className="w-full h-full object-cover" alt="Work" referrerPolicy="no-referrer" />
-                <button 
-                  type="button"
-                  onClick={() => removeImage(img)}
-                  className="absolute top-2 right-2 p-1 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
-                >
-                  <X className="w-3 h-3" />
-                </button>
-              </div>
-            ))}
           </div>
         </div>
 
@@ -2630,9 +2944,22 @@ function CreateServiceForm({ onCancel, onSuccess, userLocation, initialData, pro
             disabled={loading}
             className="flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200 disabled:opacity-50"
           >
-            {loading ? 'Duke u krijuar...' : 'Publiko Listimin'}
+            {loading ? 'Duke u ruajtur...' : (initialData ? 'Përditëso Listimin' : 'Publiko Listimin')}
           </button>
         </div>
+        {initialData && (
+          <button 
+            type="button"
+            onClick={async () => {
+              await onDelete(initialData.id);
+              onCancel();
+            }}
+            className="w-full py-3 text-red-500 text-xs font-bold hover:underline flex items-center justify-center gap-2 mt-4"
+          >
+            <Trash2 className="w-4 h-4" />
+            Fshi këtë listim përgjithmonë
+          </button>
+        )}
       </form>
     </div>
   );
